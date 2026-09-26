@@ -1,0 +1,198 @@
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'ps aux | grep -Ei "admin|api|gateway|supervis|python" | grep -v grep'
+root           1  0.0  0.2  35944  2916 ?        Ss   04:50   0:02 /usr/bin/python3 /usr/bin/supervisord -n -c /etc/supervisor/conf.d/vexa.conf
+root          26  0.0  0.1  59000  1704 ?        S    04:50   0:02 /usr/bin/python3 /usr/bin/websockify --web /usr/share/novnc 6080 localhost:5900
+root          33  0.7  0.3 386412  3460 ?        Sl   04:50   0:29 /opt/venvs/admin/bin/python -m admin_api
+root          34  0.5  0.4 324576  4336 ?        Sl   04:50   0:21 /opt/venvs/runtime/bin/python -m runtime_kernel
+root          35  0.5  0.5 769032  5068 ?        Sl   04:50   0:21 /opt/venvs/agent/bin/python3 /opt/venvs/agent/bin/uvicorn control_plane.api:app --host 0.0.0.0 --port 8100 --log-level info
+root          36  1.5  2.2 495016 22176 ?        Dl   04:50   0:58 /opt/venvs/meeting/bin/python -m meeting_api
+root          37  0.6  1.2 384052 12060 ?        Sl   04:50   0:23 /opt/venvs/gateway/bin/python -m gateway
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'ss -lntp'
+sh: 1: ss: not found
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'tr "\0" " " < /proc/33/cmdline; echo'
+/opt/venvs/admin/bin/python -m admin_api
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'grep -R "port" /proc/33/environ 2>/dev/null | head'
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'curl -sS -m 5 -i http://127.0.0.1:8000/health 2>&1 || true'
+curl: (7) Failed to connect to 127.0.0.1 port 8000 after 0 ms: Couldn't connect to server
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'grep -n -A20 -B5 "admin" /etc/supervisor/conf.d/vexa.conf'
+1-; =============================================================================
+2-; Vexa Lite (v0.12) — single-container process supervisor
+3-; =============================================================================
+4-; Runs the v0.12 control plane in ONE container: the four long-running Python services
+5:; (admin-api · runtime · meeting-api · gateway) + the agent control plane (agent-api) +
+6-; over an internal redis + a shared Xvfb/PulseAudio audio-video stack.
+7-;
+8-; The bot and the agent WORKER are NOT supervised here: the runtime (RUNTIME_BACKEND=process)
+9-; spawns them as CHILD PROCESSES on demand via the in-container launchers
+10-; (BOT_COMMAND / AGENT_WORKER_COMMAND — defaulted by the entrypoint to the /usr/local/bin
+11-; launchers, interpolated here via %(ENV_…)s so operator-provided container env wins),
+12-; sharing this container's display/audio — the lite analog of compose's docker-socket spawn.
+13-; =============================================================================
+14-[supervisord]
+15-nodaemon=true
+16-logfile=/var/log/supervisor/supervisord.log
+17-pidfile=/var/run/supervisord.pid
+18-childlogdir=/var/log/supervisor
+19-logfile_maxbytes=50MB
+20-logfile_backups=3
+21-loglevel=info
+22-
+23-; supervisorctl wiring — without these sections `supervisorctl` (the README's debug entrypoint) has
+24-; no socket to talk to. This config IS the main file (run directly), so it carries them itself.
+25-[unix_http_server]
+--
+117-stdout_logfile=/dev/stdout
+118-stderr_logfile=/dev/stderr
+119-stdout_logfile_maxbytes=0
+120-stderr_logfile_maxbytes=0
+121-
+122:; ─── admin-api (:8001) — identity: users/tokens + /internal/validate (the gateway's authz oracle) ──
+123:[program:admin-api]
+124:command=/opt/venvs/admin/bin/python -m admin_api
+125:directory=/app/admin-api
+126-autostart=true
+127-autorestart=true
+128-priority=30
+129-startsecs=10
+130-startretries=3
+131-stdout_logfile=/dev/stdout
+132-stderr_logfile=/dev/stderr
+133-stdout_logfile_maxbytes=0
+134-stderr_logfile_maxbytes=0
+135:environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/admin-api/src",HOST="127.0.0.1",PORT="8001",LOG_LEVEL="%(ENV_LOG_LEVEL)s",DB_HOST="%(ENV_DB_HOST)s",DB_PORT="%(ENV_DB_PORT)s",DB_NAME="%(ENV_DB_NAME)s",DB_USER="%(ENV_DB_USER)s",DB_PASSWORD="%(ENV_DB_PASSWORD)s",ADMIN_API_TOKEN="%(ENV_ADMIN_API_TOKEN)s",INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s"
+136-
+137-; ─── runtime (:8090) — runtime.v1; spawns bot + agent-worker as CHILD PROCESSES (process backend) ──
+138-[program:runtime]
+139-command=/opt/venvs/runtime/bin/python -m runtime_kernel
+140-directory=/app/runtime
+141-autostart=true
+142-autorestart=true
+143-priority=35
+144-startsecs=10
+145-startretries=3
+146-stdout_logfile=/dev/stdout
+147-stderr_logfile=/dev/stderr
+148-stdout_logfile_maxbytes=0
+149-stderr_logfile_maxbytes=0
+150-environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/runtime/src",HOST="127.0.0.1",PORT="8090",LOG_LEVEL="%(ENV_LOG_LEVEL)s",RUNTIME_BACKEND="process",REDIS_URL="%(ENV_REDIS_URL)s",DISPLAY=":99",BOT_COMMAND="%(ENV_BOT_COMMAND)s",AGENT_WORKER_COMMAND="%(ENV_AGENT_WORKER_COMMAND)s",BROWSER_IMAGE="lite-process",AGENT_IMAGE="lite-process",INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s",HOST_CLAUDE_CREDENTIALS="%(ENV_HOST_CLAUDE_CREDENTIALS)s",ANTHROPIC_API_KEY="%(ENV_ANTHROPIC_API_KEY)s",ANTHROPIC_AUTH_TOKEN="%(ENV_ANTHROPIC_AUTH_TOKEN)s",ANTHROPIC_BASE_URL="%(ENV_ANTHROPIC_BASE_URL)s",ANTHROPIC_MODEL="%(ENV_ANTHROPIC_MODEL)s",ANTHROPIC_DEFAULT_OPUS_MODEL="%(ENV_ANTHROPIC_DEFAULT_OPUS_MODEL)s",ANTHROPIC_DEFAULT_SONNET_MODEL="%(ENV_ANTHROPIC_DEFAULT_SONNET_MODEL)s",ANTHROPIC_DEFAULT_HAIKU_MODEL="%(ENV_ANTHROPIC_DEFAULT_HAIKU_MODEL)s"
+151-
+152-; ─── agent-api (:8100) — the unit control plane: /invocations · /api/chat (SSE) · /api/sessions ────
+153-; LITE OVERRIDES: every VEXA_*_API_URL default in agent config points at a COMPOSE service hostname
+154-; (runtime-api/agent-api/meeting-api), which does NOT resolve in the single-container lite deploy —
+155-; each must be overridden to localhost here. Missing VEXA_MEETING_API_URL made the live-transcript
+--
+224-stderr_logfile_maxbytes=0
+225-environment=NODE_ENV="production",PORT="3001",HOST="0.0.0.0",AGENT_API_URL="http://localhost:8100",GATEWAY_URL="http://localhost:8056",VEXA_API_URL="http://localhost:8056",VEXA_ADMIN_API_URL="http://localhost:8001",VEXA_ADMIN_API_KEY="%(ENV_ADMIN_API_TOKEN)s",VEXA_INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s",VEXA_API_KEY="%(ENV_VEXA_API_KEY)s",VEXA_BOT_API_KEY="%(ENV_VEXA_BOT_API_KEY)s",TRANSCRIPTION_SERVICE_URL="%(ENV_TRANSCRIPTION_SERVICE_URL)s",TRANSCRIPTION_SERVICE_TOKEN="%(ENV_TRANSCRIPTION_SERVICE_TOKEN)s",TRANSCRIPTION_MODEL="%(ENV_TRANSCRIPTION_MODEL)s",NEXTAUTH_URL="%(ENV_TERMINAL_PUBLIC_URL)s",NEXTAUTH_SECRET="%(ENV_NEXTAUTH_SECRET)s"
+226-
+227-; ─── process group ────────────────────────────────────────────────────────────────────────────────
+228-[group:vexa]
+229:programs=redis,xvfb,fluxbox,pulseaudio,pulseaudio-setup,x11vnc,websockify,admin-api,runtime,agent-api,meeting-api,gateway,terminal
+230-priority=999
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'find /var/log -maxdepth 3 -type f 2>/dev/null | grep -Ei "admin|vexa|supervisor" | sort'
+/var/log/supervisor/supervisord.log
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'curl -sS -m 5 -i http://127.0.0.1:8001/health 2>&1 || true'
+HTTP/1.1 200 OK
+date: Sat, 26 Sep 2026 05:59:18 GMT
+server: uvicorn
+content-length: 37
+content-type: application/json
+
+{"status":"ok","service":"admin-api"}ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'curl -sS -m 5 -i http://127.0.0.1:8001/docs 2>&1 | head -30'
+HTTP/1.1 200 OK
+date: Sat, 26 Sep 2026 05:59:27 GMT
+server: uvicorn
+content-length: 1021
+content-type: text/html; charset=utf-8
+
+
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link type="text/css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+    <link rel="shortcut icon" href="https://fastapi.tiangolo.com/img/favicon.png">
+    <title>Vexa Admin API (v0.12) - Swagger UI</title>
+    </head>
+    <body>
+    <div id="swagger-ui">
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <!-- `SwaggerUIBundle` is now available on the page -->
+    <script>
+    const ui = SwaggerUIBundle({
+        url: '/openapi.json',
+    "dom_id": "#swagger-ui",
+"layout": "BaseLayout",
+"deepLinking": true,
+"showExtensions": true,
+"showCommonExtensions": true,
+oauth2RedirectUrl: window.location.origin + '/docs/oauth2-redirect',
+    presets: [
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'env | grep -E "^(VEXA_ADMIN_API_URL|ADMIN_API|ADMIN_API_URL|VEXA_API_KEY|VEXA_BOT_API_KEY)="'
+VEXA_API_KEY=
+VEXA_BOT_API_KEY=
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'env | grep -E "^(VEXA_ADMIN_API_URL|ADMIN_API|ADMIN_API_URL|VEXA_API_KEY|VEXA_BOT_API_KEY)=" | sed -E "s/=(vxa_[^ ]*)$/=<REDACTED>/"'
+VEXA_API_KEY=
+VEXA_BOT_API_KEY=
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'grep -n -E "VEXA_ADMIN_API_URL|ADMIN_API|API_KEY|key.env" /etc/supervisor/conf.d/vexa.conf | sed -E "s/(VEXA_API_KEY|VEXA_BOT_API_KEY|ADMIN_API_KEY|API_KEY)=([^ ]+)/\1=<REDACTED>/g"'
+135:environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/admin-api/src",HOST="127.0.0.1",PORT="8001",LOG_LEVEL="%(ENV_LOG_LEVEL)s",DB_HOST="%(ENV_DB_HOST)s",DB_PORT="%(ENV_DB_PORT)s",DB_NAME="%(ENV_DB_NAME)s",DB_USER="%(ENV_DB_USER)s",DB_PASSWORD="%(ENV_DB_PASSWORD)s",ADMIN_API_TOKEN="%(ENV_ADMIN_API_TOKEN)s",INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s"
+150:environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/runtime/src",HOST="127.0.0.1",PORT="8090",LOG_LEVEL="%(ENV_LOG_LEVEL)s",RUNTIME_BACKEND="process",REDIS_URL="%(ENV_REDIS_URL)s",DISPLAY=":99",BOT_COMMAND="%(ENV_BOT_COMMAND)s",AGENT_WORKER_COMMAND="%(ENV_AGENT_WORKER_COMMAND)s",BROWSER_IMAGE="lite-process",AGENT_IMAGE="lite-process",INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s",HOST_CLAUDE_CREDENTIALS="%(ENV_HOST_CLAUDE_CREDENTIALS)s",ANTHROPIC_API_KEY=<REDACTED>
+170:environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/agent",VEXA_AGENT_API_PORT="8100",VEXA_RUNTIME_API_URL="http://localhost:8090",VEXA_AGENT_API_SELF_URL="http://localhost:8100",VEXA_MEETING_API_URL="http://localhost:8080",VEXA_AGENT_PROFILE="agent",VEXA_WORKSPACES_DIR="/workspaces",VEXA_WORKSPACE_SEEDS_DIR="/app/agent/workspace-seeds",VEXA_TOOLS_SEED_DIR="/app/agent/tools-seed",VEXA_AGENT_DEFAULT_SUBJECT="%(ENV_VEXA_AGENT_DEFAULT_SUBJECT)s",VEXA_REDIS_URL="%(ENV_REDIS_URL)s",VEXA_DISPATCH_SIGNING_KEY="%(ENV_VEXA_DISPATCH_SIGNING_KEY)s",VEXA_GATEWAY_URL="http://localhost:8056",VEXA_BOT_API_KEY=<REDACTED>
+185:environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/meeting-api/src",HOST="127.0.0.1",PORT="8080",LOG_LEVEL="%(ENV_LOG_LEVEL)s",DB_HOST="%(ENV_DB_HOST)s",DB_PORT="%(ENV_DB_PORT)s",DB_NAME="%(ENV_DB_NAME)s",DB_USER="%(ENV_DB_USER)s",DB_PASSWORD="%(ENV_DB_PASSWORD)s",REDIS_URL="%(ENV_REDIS_URL)s",RUNTIME_API_URL="http://localhost:8090",MEETING_API_URL="http://localhost:8080",ADMIN_API_URL="http://localhost:8001",INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s",ADMIN_TOKEN="%(ENV_ADMIN_API_TOKEN)s",DEFAULT_BOT_NAME="%(ENV_DEFAULT_BOT_NAME)s",TRANSCRIPTION_SERVICE_URL="%(ENV_TRANSCRIPTION_SERVICE_URL)s",TRANSCRIPTION_SERVICE_TOKEN="%(ENV_TRANSCRIPTION_SERVICE_TOKEN)s",TRANSCRIPTION_MODEL="%(ENV_TRANSCRIPTION_MODEL)s",MINIO_ENDPOINT="%(ENV_MINIO_ENDPOINT)s",MINIO_ACCESS_KEY="%(ENV_MINIO_ACCESS_KEY)s",MINIO_SECRET_KEY="%(ENV_MINIO_SECRET_KEY)s",MINIO_BUCKET="%(ENV_MINIO_BUCKET)s",MINIO_SECURE="%(ENV_MINIO_SECURE)s"
+207:environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app/gateway/src",HOST="0.0.0.0",PORT="8056",LOG_LEVEL="%(ENV_LOG_LEVEL)s",ADMIN_API_URL="http://localhost:8001",MEETING_API_URL="http://localhost:8080",AGENT_API_URL="http://localhost:8100",REDIS_URL="%(ENV_REDIS_URL)s",INTERNAL_API_SECRET="%(ENV_INTERNAL_API_SECRET)s",GUARD_ENABLED="%(ENV_GUARD_ENABLED)s",GUARD_WS_ENABLED="%(ENV_GUARD_WS_ENABLED)s"
+212:; Source the self-host key file (provision-key.sh) so VEXA_API_KEY is present for zero-login; the
+214:command=sh -c 'set -a; [ -f /run/vexa/key.env ] && . /run/vexa/key.env; set +a; exec node server.mjs'
+225:environment=NODE_ENV="production",PORT="3001",HOST="0.0.0.0",AGENT_API_URL="http://localhost:8100",GATEWAY_URL="http://localhost:8056",VEXA_API_URL="http://localhost:8056",VEXA_ADMIN_API_URL="http://localhost:8001",VEXA_ADMIN_API_KEY=<REDACTED>
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'grep -RniE "VEXA_ADMIN_API_URL|ADMIN_API|API_KEY|key.env" /opt/venvs/admin/lib/python*/site-packages/admin_api /opt/venvs/admin 2>/dev/null | head -80'
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/__init__.py:1:from .api_key import APIKeyCookie as APIKeyCookie
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/__init__.py:2:from .api_key import APIKeyHeader as APIKeyHeader
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/__init__.py:3:from .api_key import APIKeyQuery as APIKeyQuery
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:47:    def check_api_key(self, api_key: str | None) -> str | None:
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:48:        if not api_key:
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:52:        return api_key
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:78:    query_scheme = APIKeyQuery(name="api_key")
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:82:    async def read_items(api_key: str = Depends(query_scheme)):
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:83:        return {"api_key": api_key}
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:143:        api_key = request.query_params.get(self.model.name)
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:144:        return self.check_api_key(api_key)
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:231:        api_key = request.headers.get(self.model.name)
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:232:        return self.check_api_key(api_key)
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:319:        api_key = request.cookies.get(self.model.name)
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi/security/api_key.py:320:        return self.check_api_key(api_key)
+/opt/venvs/admin/lib64/python3.12/site-packages/testcontainers/qdrant/__init__.py:45:        api_key: Optional[str] = None,
+/opt/venvs/admin/lib64/python3.12/site-packages/testcontainers/qdrant/__init__.py:52:        self._api_key = api_key or os.getenv("QDRANT_CONTAINER_API_KEY")
+/opt/venvs/admin/lib64/python3.12/site-packages/testcontainers/qdrant/__init__.py:60:        self.with_env("QDRANT__SERVICE__API_KEY", self._api_key)
+/opt/venvs/admin/lib64/python3.12/site-packages/testcontainers/qdrant/__init__.py:86:            api_key=self._api_key,
+/opt/venvs/admin/lib64/python3.12/site-packages/testcontainers/qdrant/__init__.py:113:            api_key=self._api_key,
+/opt/venvs/admin/lib64/python3.12/site-packages/sqlalchemy/testing/profiling.py:93:        dbapi_key = config.db.name + "_" + config.db.driver
+/opt/venvs/admin/lib64/python3.12/site-packages/sqlalchemy/testing/profiling.py:98:            dbapi_key += "_file"
+/opt/venvs/admin/lib64/python3.12/site-packages/sqlalchemy/testing/profiling.py:108:            dbapi_key,
+/opt/venvs/admin/lib64/python3.12/site-packages/fastapi-0.138.0.dist-info/RECORD:49:fastapi/security/api_key.py,sha256=4CNLNVAStOsMhytH9C5EOUEOZrtLg_IpMQS_HcRDP4M,9793
+/opt/venvs/admin/lib64/python3.12/site-packages/packaging/markers.py:275:            lhs_value, rhs_value = _normalize(lhs_value, rhs_value, key=environment_key)
+/opt/venvs/admin/lib64/python3.12/site-packages/packaging/markers.py:276:            groups[-1].append(_eval_op(lhs_value, op, rhs_value, key=environment_key))
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/__init__.py:1:from .api_key import APIKeyCookie as APIKeyCookie
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/__init__.py:2:from .api_key import APIKeyHeader as APIKeyHeader
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/__init__.py:3:from .api_key import APIKeyQuery as APIKeyQuery
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:47:    def check_api_key(self, api_key: str | None) -> str | None:
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:48:        if not api_key:
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:52:        return api_key
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:78:    query_scheme = APIKeyQuery(name="api_key")
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:82:    async def read_items(api_key: str = Depends(query_scheme)):
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:83:        return {"api_key": api_key}
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:143:        api_key = request.query_params.get(self.model.name)
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:144:        return self.check_api_key(api_key)
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:231:        api_key = request.headers.get(self.model.name)
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:232:        return self.check_api_key(api_key)
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:319:        api_key = request.cookies.get(self.model.name)
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi/security/api_key.py:320:        return self.check_api_key(api_key)
+/opt/venvs/admin/lib/python3.12/site-packages/testcontainers/qdrant/__init__.py:45:        api_key: Optional[str] = None,
+/opt/venvs/admin/lib/python3.12/site-packages/testcontainers/qdrant/__init__.py:52:        self._api_key = api_key or os.getenv("QDRANT_CONTAINER_API_KEY")
+/opt/venvs/admin/lib/python3.12/site-packages/testcontainers/qdrant/__init__.py:60:        self.with_env("QDRANT__SERVICE__API_KEY", self._api_key)
+/opt/venvs/admin/lib/python3.12/site-packages/testcontainers/qdrant/__init__.py:86:            api_key=self._api_key,
+/opt/venvs/admin/lib/python3.12/site-packages/testcontainers/qdrant/__init__.py:113:            api_key=self._api_key,
+/opt/venvs/admin/lib/python3.12/site-packages/sqlalchemy/testing/profiling.py:93:        dbapi_key = config.db.name + "_" + config.db.driver
+/opt/venvs/admin/lib/python3.12/site-packages/sqlalchemy/testing/profiling.py:98:            dbapi_key += "_file"
+/opt/venvs/admin/lib/python3.12/site-packages/sqlalchemy/testing/profiling.py:108:            dbapi_key,
+/opt/venvs/admin/lib/python3.12/site-packages/fastapi-0.138.0.dist-info/RECORD:49:fastapi/security/api_key.py,sha256=4CNLNVAStOsMhytH9C5EOUEOZrtLg_IpMQS_HcRDP4M,9793
+/opt/venvs/admin/lib/python3.12/site-packages/packaging/markers.py:275:            lhs_value, rhs_value = _normalize(lhs_value, rhs_value, key=environment_key)
+/opt/venvs/admin/lib/python3.12/site-packages/packaging/markers.py:276:            groups[-1].append(_eval_op(lhs_value, op, rhs_value, key=environment_key))
+ubuntu@vcn-vexa-vnic:~/vexa$
