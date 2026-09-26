@@ -1,0 +1,7 @@
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'env | grep -E "^(VEXA_ADMIN_API_URL|ADMIN_API|ADMIN_API_URL|VEXA_API_KEY|VEXA_BOT_API_KEY)="'
+VEXA_API_KEY=
+VEXA_BOT_API_KEY=
+ubuntu@vcn-vexa-vnic:~/vexa$ docker exec vexa-lite sh -c 'env | grep -E "^(VEXA_ADMIN_API_URL|ADMIN_API|ADMIN_API_URL|VEXA_API_KEY|VEXA_BOT_API_KEY)=" | sed -E "s/=(vxa_[^ ]*)$/=<REDACTED>/"'
+VEXA_API_KEY=
+VEXA_BOT_API_KEY=
+ubuntu@vcn-vexa-vnic:~/vexa$
